@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # pil_project
 
 A new Flutter project.
@@ -14,3 +15,6 @@ A few resources to get you started if this is your first Flutter project:
 For help getting started with Flutter development, view the
 [online documentation](https://docs.flutter.dev/), which offers tutorials,
 samples, guidance on mobile development, and a full API reference.
+=======
+# mediobserver
+>>>>>>> 3030cb801bbae18bb29c323b4d63185201876b8e

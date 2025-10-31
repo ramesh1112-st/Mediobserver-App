@@ -1,0 +1,54 @@
+{
+  "project_info": {
+    "project_number": "134041370565",
+    "project_id": "pil-project-43392",
+    "storage_bucket": "pil-project-43392.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:134041370565:android:ad7bd3bb0e33218c77d5ac",
+        "android_client_info": {
+          "package_name": "com.example.pil_project"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "134041370565-oimoem6uaehep92qn36v3naj0v9fdopi.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.pil_project",
+            "certificate_hash": "29cab16e415549995fd12de77c340ecae6882684"
+          }
+        },
+        {
+          "client_id": "134041370565-b2qo2qgf65tg8dd14o2da446u6f9kgh2.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAOx6T1dVI7Q3k3_gxfbNgvStQdA9S_Kz8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "134041370565-b2qo2qgf65tg8dd14o2da446u6f9kgh2.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "134041370565-jsd5lbjp6tsmuuq35l37jib5jrc8fako.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.pilProject"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

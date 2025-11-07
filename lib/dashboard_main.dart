@@ -20,10 +20,8 @@ class _MainDashboardState extends State<MainDashboard> {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
-  //  Get the logged-in user ID
   String? get userId => _auth.currentUser?.uid;
 
-  // Firestore Streams for real-time data
   Stream<QuerySnapshot> getMedicinesStream() {
     return _firestore
         .collection('medicines')
@@ -49,14 +47,12 @@ class _MainDashboardState extends State<MainDashboard> {
           setState(() => _currentIndex = index);
         },
         children: [
-          const HomeScreen(),
-          const MedicineScreen(),
-          const ProfileScreen(),
-          const AppointmentScreen(),
+          HomeScreen(), // 1️⃣ Home
+          AppointmentScreen(), // 2️⃣ Appointments
+          MedicineScreen(), // 3️⃣ Medicine
+          ProfileScreen(), // 4️⃣ Profile
         ],
       ),
-
-      // Bottom Navigation Bar
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,
         selectedItemColor: Colors.teal,
@@ -72,14 +68,14 @@ class _MainDashboardState extends State<MainDashboard> {
         items: const [
           BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Home'),
           BottomNavigationBarItem(
+            icon: Icon(Icons.event_available),
+            label: 'Appointments',
+          ),
+          BottomNavigationBarItem(
             icon: Icon(Icons.medication),
             label: 'Medicine',
           ),
           BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Profile'),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.event_available),
-            label: 'Appointments',
-          ),
         ],
       ),
     );

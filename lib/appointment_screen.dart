@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'notification_service.dart'; // ✅ Import notification service
+import 'package:intl/intl.dart';
 
 class AppointmentScreen extends StatefulWidget {
   const AppointmentScreen({super.key});
@@ -12,140 +12,427 @@ class AppointmentScreen extends StatefulWidget {
 
 class _AppointmentScreenState extends State<AppointmentScreen> {
   final TextEditingController _doctorController = TextEditingController();
-  final TextEditingController _dateController = TextEditingController();
+  final TextEditingController _specialtyController = TextEditingController();
+  DateTime? _selectedDate;
+  TimeOfDay? _selectedTime;
+
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
-  Future<void> _addAppointment() async {
+  // Add Appointment
+  Future<void> addAppointment() async {
     final user = _auth.currentUser;
     if (user == null) return;
 
     final doctor = _doctorController.text.trim();
-    final dateText = _dateController.text.trim();
+    final specialty = _specialtyController.text.trim();
 
-    if (doctor.isEmpty || dateText.isEmpty) {
+    if (doctor.isEmpty ||
+        specialty.isEmpty ||
+        _selectedDate == null ||
+        _selectedTime == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Please fill all fields")),
+        const SnackBar(
+          content: Text("⚠️ Please fill all fields and select date/time"),
+        ),
       );
       return;
     }
 
-    // 🗓 Parse date from text
-    // Expected input format: 5 Nov, 10:00 AM
-    DateTime? parsedDate;
-    try {
-      // For now, just schedule it 10 seconds later for testing
-      parsedDate = DateTime.now().add(const Duration(seconds: 10));
-      // (You can replace this with proper parsing later)
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Invalid date format")),
-      );
-      return;
-    }
+    final appointmentDateTime = DateTime(
+      _selectedDate!.year,
+      _selectedDate!.month,
+      _selectedDate!.day,
+      _selectedTime!.hour,
+      _selectedTime!.minute,
+    );
 
-    // ✅ Save in Firestore
-    await FirebaseFirestore.instance
+    await _firestore
         .collection('users')
         .doc(user.uid)
         .collection('appointments')
         .add({
-      'doctor': doctor,
-      'date': dateText,
-      'createdAt': FieldValue.serverTimestamp(),
-    });
+          'doctor': doctor,
+          'specialty': specialty,
+          'date': Timestamp.fromDate(
+            appointmentDateTime,
+          ), // ✅ Store as Timestamp
+          'createdAt': FieldValue.serverTimestamp(),
+        });
 
-    // ✅ Schedule notification
-    await NotificationService.scheduleSingleNotification(
-      title: "📅 Appointment Reminder",
-      body: "You have an appointment with Dr. $doctor at $dateText",
-      dateTime: parsedDate,
-    );
-
-    // Clear text fields
     _doctorController.clear();
-    _dateController.clear();
+    _specialtyController.clear();
+    _selectedDate = null;
+    _selectedTime = null;
 
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("Appointment added & reminder set!")),
+      const SnackBar(content: Text("✅ Appointment added successfully")),
     );
+
+    setState(() {});
+  }
+
+  // Delete Appointment
+  Future<void> deleteAppointment(String docId) async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+
+    await _firestore
+        .collection('users')
+        .doc(user.uid)
+        .collection('appointments')
+        .doc(docId)
+        .delete();
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("🗑️ Appointment deleted successfully")),
+    );
+  }
+
+  // Edit Appointment
+  void editAppointment(String docId, Map<String, dynamic> data) {
+    _doctorController.text = data['doctor'] ?? '';
+    _specialtyController.text = data['specialty'] ?? '';
+
+    DateTime? existingDate;
+    if (data['date'] is Timestamp) {
+      existingDate = (data['date'] as Timestamp).toDate();
+    }
+
+    setState(() {
+      _selectedDate = existingDate;
+      _selectedTime = existingDate != null
+          ? TimeOfDay(hour: existingDate.hour, minute: existingDate.minute)
+          : null;
+    });
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text("Edit Appointment"),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: _doctorController,
+                decoration: const InputDecoration(labelText: "Doctor Name"),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _specialtyController,
+                decoration: const InputDecoration(labelText: "Specialty"),
+              ),
+              const SizedBox(height: 15),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      icon: const Icon(
+                        Icons.calendar_today,
+                        color: Colors.teal,
+                      ),
+                      label: Text(
+                        _selectedDate == null
+                            ? "Select Date"
+                            : DateFormat('dd MMM yyyy').format(_selectedDate!),
+                      ),
+                      onPressed: () async {
+                        final pickedDate = await showDatePicker(
+                          context: context,
+                          initialDate: _selectedDate ?? DateTime.now(),
+                          firstDate: DateTime(2020),
+                          lastDate: DateTime(2100),
+                        );
+                        if (pickedDate != null) {
+                          setState(() => _selectedDate = pickedDate);
+                        }
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      icon: const Icon(Icons.access_time, color: Colors.teal),
+                      label: Text(
+                        _selectedTime == null
+                            ? "Select Time"
+                            : _selectedTime!.format(context),
+                      ),
+                      onPressed: () async {
+                        final pickedTime = await showTimePicker(
+                          context: context,
+                          initialTime: _selectedTime ?? TimeOfDay.now(),
+                        );
+                        if (pickedTime != null) {
+                          setState(() => _selectedTime = pickedTime);
+                        }
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text("Cancel"),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.teal),
+              onPressed: () async {
+                final user = _auth.currentUser;
+                if (user == null) return;
+
+                if (_selectedDate == null || _selectedTime == null) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text("⚠️ Please select date & time"),
+                    ),
+                  );
+                  return;
+                }
+
+                final appointmentDateTime = DateTime(
+                  _selectedDate!.year,
+                  _selectedDate!.month,
+                  _selectedDate!.day,
+                  _selectedTime!.hour,
+                  _selectedTime!.minute,
+                );
+
+                await _firestore
+                    .collection('users')
+                    .doc(user.uid)
+                    .collection('appointments')
+                    .doc(docId)
+                    .update({
+                      'doctor': _doctorController.text.trim(),
+                      'specialty': _specialtyController.text.trim(),
+                      'date': Timestamp.fromDate(appointmentDateTime),
+                    });
+
+                Navigator.pop(context);
+
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text("✅ Appointment updated successfully"),
+                  ),
+                );
+
+                _doctorController.clear();
+                _specialtyController.clear();
+                _selectedDate = null;
+                _selectedTime = null;
+
+                setState(() {});
+              },
+              child: const Text("Update"),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Stream<QuerySnapshot> getAppointments() {
+    final user = _auth.currentUser;
+    return _firestore
+        .collection('users')
+        .doc(user!.uid)
+        .collection('appointments')
+        .orderBy('date', descending: false)
+        .snapshots();
   }
 
   @override
   Widget build(BuildContext context) {
-    final user = _auth.currentUser;
-    if (user == null) {
-      return const Center(child: Text("No user logged in"));
-    }
+    final screenWidth = MediaQuery.of(context).size.width;
 
     return Scaffold(
+      backgroundColor: Colors.grey[100],
       appBar: AppBar(
-        title: const Text("Doctor Appointments"),
+        title: const Text('Appointments 📅'),
         backgroundColor: Colors.teal,
-        centerTitle: true,
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
         child: Column(
           children: [
-            TextField(
-              controller: _doctorController,
-              decoration: const InputDecoration(
-                labelText: "Doctor Name",
-                border: OutlineInputBorder(),
+            Center(
+              child: SizedBox(
+                width: screenWidth * 0.7,
+                child: Card(
+                  color: Colors.white,
+                  elevation: 3,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      children: [
+                        const Icon(
+                          Icons.calendar_today,
+                          color: Colors.teal,
+                          size: 50,
+                        ),
+                        const SizedBox(height: 15),
+                        TextField(
+                          controller: _doctorController,
+                          decoration: const InputDecoration(
+                            labelText: 'Doctor Name',
+                            prefixIcon: Icon(Icons.person),
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                        const SizedBox(height: 15),
+                        TextField(
+                          controller: _specialtyController,
+                          decoration: const InputDecoration(
+                            labelText: 'Specialty',
+                            prefixIcon: Icon(Icons.medical_services),
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                        const SizedBox(height: 15),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                icon: const Icon(
+                                  Icons.calendar_today,
+                                  color: Colors.teal,
+                                ),
+                                label: Text(
+                                  _selectedDate == null
+                                      ? "Select Date"
+                                      : DateFormat(
+                                          'dd MMM yyyy',
+                                        ).format(_selectedDate!),
+                                ),
+                                onPressed: () async {
+                                  final pickedDate = await showDatePicker(
+                                    context: context,
+                                    initialDate:
+                                        _selectedDate ?? DateTime.now(),
+                                    firstDate: DateTime(2020),
+                                    lastDate: DateTime(2100),
+                                  );
+                                  if (pickedDate != null) {
+                                    setState(() => _selectedDate = pickedDate);
+                                  }
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                icon: const Icon(
+                                  Icons.access_time,
+                                  color: Colors.teal,
+                                ),
+                                label: Text(
+                                  _selectedTime == null
+                                      ? "Select Time"
+                                      : _selectedTime!.format(context),
+                                ),
+                                onPressed: () async {
+                                  final pickedTime = await showTimePicker(
+                                    context: context,
+                                    initialTime:
+                                        _selectedTime ?? TimeOfDay.now(),
+                                  );
+                                  if (pickedTime != null) {
+                                    setState(() => _selectedTime = pickedTime);
+                                  }
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 20),
+                        ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.teal,
+                            foregroundColor: Colors.white,
+                            minimumSize: const Size(double.infinity, 45),
+                          ),
+                          onPressed: addAppointment,
+                          child: const Text('Add Appointment'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               ),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _dateController,
-              decoration: const InputDecoration(
-                labelText: "Date & Time (e.g. 5 Nov, 10 AM)",
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 10),
-            ElevatedButton(
-              onPressed: _addAppointment,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.teal,
-                foregroundColor: Colors.white,
-                minimumSize: const Size(double.infinity, 45),
-              ),
-              child: const Text("Add Appointment"),
             ),
             const SizedBox(height: 20),
-            Expanded(
-              child: StreamBuilder<QuerySnapshot>(
-                stream: FirebaseFirestore.instance
-                    .collection('users')
-                    .doc(user.uid)
-                    .collection('appointments')
-                    .orderBy('createdAt', descending: true)
-                    .snapshots(),
-                builder: (context, snapshot) {
-                  if (snapshot.connectionState == ConnectionState.waiting) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-                  final appointments = snapshot.data?.docs ?? [];
-                  if (appointments.isEmpty) {
-                    return const Center(child: Text("No appointments added yet"));
-                  }
+            // List of Appointments
+            StreamBuilder<QuerySnapshot>(
+              stream: getAppointments(),
+              builder: (context, snapshot) {
+                if (!snapshot.hasData) return const CircularProgressIndicator();
 
-                  return ListView.builder(
-                    itemCount: appointments.length,
-                    itemBuilder: (context, index) {
-                      final data =
-                          appointments[index].data() as Map<String, dynamic>;
-                      return Card(
-                        child: ListTile(
-                          leading: const Icon(Icons.calendar_today, color: Colors.teal),
-                          title: Text(data['doctor'] ?? 'Unknown'),
-                          subtitle: Text(data['date'] ?? ''),
+                final appointments = snapshot.data!.docs;
+                if (appointments.isEmpty)
+                  return const Text("No appointments added.");
+
+                return Column(
+                  children: appointments.map((doc) {
+                    final data = doc.data() as Map<String, dynamic>;
+                    DateTime? dateTime;
+                    if (data['date'] is Timestamp) {
+                      dateTime = (data['date'] as Timestamp).toDate();
+                    }
+
+                    return Center(
+                      child: SizedBox(
+                        width: screenWidth * 0.7,
+                        child: Card(
+                          color: Colors.white,
+                          elevation: 2,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          margin: const EdgeInsets.symmetric(vertical: 6),
+                          child: ListTile(
+                            leading: const Icon(
+                              Icons.calendar_today,
+                              color: Colors.teal,
+                            ),
+                            title: Text(data['doctor'] ?? 'Unknown Doctor'),
+                            subtitle: Text(
+                              "Specialty: ${data['specialty'] ?? ''}\nDate: ${dateTime != null ? DateFormat('dd MMM yyyy - hh:mm a').format(dateTime) : 'N/A'}",
+                            ),
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                  icon: const Icon(
+                                    Icons.edit,
+                                    color: Colors.blue,
+                                  ),
+                                  onPressed: () =>
+                                      editAppointment(doc.id, data),
+                                ),
+                                IconButton(
+                                  icon: const Icon(
+                                    Icons.delete,
+                                    color: Colors.red,
+                                  ),
+                                  onPressed: () => deleteAppointment(doc.id),
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
-                      );
-                    },
-                  );
-                },
-              ),
+                      ),
+                    );
+                  }).toList(),
+                );
+              },
             ),
           ],
         ),

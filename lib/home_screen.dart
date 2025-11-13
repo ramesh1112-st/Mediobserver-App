@@ -16,21 +16,26 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Stream<QuerySnapshot>? _todayMedicinesStream;
   Stream<QuerySnapshot>? _todayAppointmentsStream;
+  Stream<QuerySnapshot>? _bpDataStream;
 
-  // Steps Tracking
   int _todaySteps = 0;
   final int _stepGoal = 10000;
+
+  final TextEditingController _systolicController = TextEditingController();
+  final TextEditingController _diastolicController = TextEditingController();
+  DateTime? _selectedBPDateTime;
 
   @override
   void initState() {
     super.initState();
     final user = _auth.currentUser;
+
     if (user != null) {
       final now = DateTime.now();
       final startOfDay = DateTime(now.year, now.month, now.day);
       final endOfDay = startOfDay.add(const Duration(days: 1));
 
-      // Today's Medicines
+      // Today’s medicines (with daily ones)
       _todayMedicinesStream = _firestore
           .collection('users')
           .doc(user.uid)
@@ -40,90 +45,115 @@ class _HomeScreenState extends State<HomeScreen> {
             isGreaterThanOrEqualTo: Timestamp.fromDate(startOfDay),
           )
           .where('datetime', isLessThan: Timestamp.fromDate(endOfDay))
-          .orderBy('datetime', descending: false)
           .snapshots();
 
-      // Today's Appointments
+      // Today’s appointments
       _todayAppointmentsStream = _firestore
           .collection('users')
           .doc(user.uid)
           .collection('appointments')
-          .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(startOfDay))
-          .where('date', isLessThan: Timestamp.fromDate(endOfDay))
-          .orderBy('date', descending: false)
+          .snapshots();
+
+      // BP readings stream
+      _bpDataStream = _firestore
+          .collection('users')
+          .doc(user.uid)
+          .collection('bp_readings')
+          .orderBy('datetime', descending: true)
           .snapshots();
     }
   }
 
-  // ---------------- Steps Tracker ----------------
-  Widget _buildStepsSection() {
-    double progress = (_todaySteps / _stepGoal).clamp(0.0, 1.0);
+  // ---------------- BP Save ----------------
+  Future<void> _saveBPReading() async {
+    final user = _auth.currentUser;
+    if (user == null) return;
 
-    return _buildSectionContainer(
-      title: "Steps Tracker",
-      child: Column(
-        children: [
-          Text(
-            _todaySteps.toString(),
-            style: const TextStyle(fontSize: 40, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 10),
-          LinearProgressIndicator(
-            value: progress,
-            minHeight: 10,
-            backgroundColor: Colors.grey[300],
-            valueColor: const AlwaysStoppedAnimation(Colors.teal),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            "Goal: ${NumberFormat('#,###').format(_stepGoal)} steps",
-            style: const TextStyle(color: Colors.black54),
-          ),
-          const SizedBox(height: 20),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              IconButton(
-                onPressed: () {
-                  setState(() {
-                    _todaySteps = (_todaySteps - 100).clamp(0, _stepGoal);
-                  });
-                },
-                icon: const Icon(Icons.remove_circle_outline),
-                color: Colors.red,
-                iconSize: 35,
+    final systolic = _systolicController.text.trim();
+    final diastolic = _diastolicController.text.trim();
+    if (systolic.isEmpty || diastolic.isEmpty || _selectedBPDateTime == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Please fill all fields and pick a time."),
+        ),
+      );
+      return;
+    }
+
+    await _firestore
+        .collection('users')
+        .doc(user.uid)
+        .collection('bp_readings')
+        .add({
+          'systolic': systolic,
+          'diastolic': diastolic,
+          'datetime': Timestamp.fromDate(_selectedBPDateTime!),
+        });
+
+    _systolicController.clear();
+    _diastolicController.clear();
+    setState(() => _selectedBPDateTime = null);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("BP Reading Saved Successfully")),
+    );
+  }
+
+  void _showBPDataDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("BP Readings"),
+        content: StreamBuilder<QuerySnapshot>(
+          stream: _bpDataStream,
+          builder: (context, snapshot) {
+            if (!snapshot.hasData) {
+              return const SizedBox(
+                height: 100,
+                child: Center(child: CircularProgressIndicator()),
+              );
+            }
+            final docs = snapshot.data!.docs;
+            if (docs.isEmpty) return const Text("No BP data found.");
+            return SizedBox(
+              width: double.maxFinite,
+              height: 300,
+              child: ListView(
+                children: docs.map((doc) {
+                  final data = Map<String, dynamic>.from(doc.data() as Map);
+                  final time = DateFormat(
+                    'dd MMM, hh:mm a',
+                  ).format((data['datetime'] as Timestamp).toDate());
+                  return ListTile(
+                    title: Text(
+                      "BP: ${data['systolic']}/${data['diastolic']} mmHg",
+                    ),
+                    subtitle: Text("Time: $time"),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.delete, color: Colors.red),
+                      onPressed: () async {
+                        await doc.reference.delete();
+                      },
+                    ),
+                  );
+                }).toList(),
               ),
-              const SizedBox(width: 20),
-              IconButton(
-                onPressed: () {
-                  setState(() {
-                    _todaySteps += 100;
-                  });
-                },
-                icon: const Icon(Icons.add_circle_outline),
-                color: Colors.green,
-                iconSize: 35,
-              ),
-              const SizedBox(width: 20),
-              IconButton(
-                onPressed: () {
-                  setState(() {
-                    _todaySteps = 0;
-                  });
-                },
-                icon: const Icon(Icons.refresh),
-                color: Colors.teal,
-                iconSize: 35,
-              ),
-            ],
+            );
+          },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("Close"),
           ),
         ],
       ),
     );
   }
 
-  // ---------------- Today's Medicines ----------------
+  // ---------------- Medicines Section ----------------
   Widget _buildMedicineSection() {
+    final now = DateTime.now();
     return _buildSectionContainer(
       title: "Today's Medicines",
       child: StreamBuilder<QuerySnapshot>(
@@ -136,16 +166,33 @@ class _HomeScreenState extends State<HomeScreen> {
             return const Text("No medicines for today.");
           }
 
-          final medicines = snapshot.data!.docs;
+          final medicines = snapshot.data!.docs.where((doc) {
+            final med = Map<String, dynamic>.from(doc.data() as Map);
+            final isDaily = med['isDaily'] == true;
+            final date = med['datetime'] is Timestamp
+                ? (med['datetime'] as Timestamp).toDate()
+                : null;
+            return isDaily ||
+                (date != null &&
+                    date.year == now.year &&
+                    date.month == now.month &&
+                    date.day == now.day);
+          }).toList();
+
+          if (medicines.isEmpty) return const Text("No medicines for today.");
 
           return Column(
             children: medicines.map((doc) {
-              final med = doc.data() as Map<String, dynamic>;
+              final med = Map<String, dynamic>.from(doc.data() as Map);
               String time = 'N/A';
-              if (med['datetime'] is Timestamp) {
-                final dateTime = (med['datetime'] as Timestamp).toDate();
-                time = DateFormat('hh:mm a').format(dateTime);
+              if (med['isDaily'] == true) {
+                time = "Daily";
+              } else if (med['datetime'] is Timestamp) {
+                time = DateFormat(
+                  'hh:mm a',
+                ).format((med['datetime'] as Timestamp).toDate());
               }
+
               return Card(
                 margin: const EdgeInsets.symmetric(vertical: 6),
                 child: ListTile(
@@ -163,8 +210,9 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // ---------------- Today's Appointments ----------------
+  // ---------------- Appointments Section ----------------
   Widget _buildAppointmentsSection() {
+    final now = DateTime.now();
     return _buildSectionContainer(
       title: "Today's Appointments",
       child: StreamBuilder<QuerySnapshot>(
@@ -177,13 +225,30 @@ class _HomeScreenState extends State<HomeScreen> {
             return const Text("No appointments for today.");
           }
 
-          final appointments = snapshot.data!.docs;
+          final appointments = snapshot.data!.docs.where((doc) {
+            final data = Map<String, dynamic>.from(doc.data() as Map);
+            final isDaily = data['isDaily'] == true;
+            final date = data['date'] is Timestamp
+                ? (data['date'] as Timestamp).toDate()
+                : null;
+            return isDaily ||
+                (date != null &&
+                    date.year == now.year &&
+                    date.month == now.month &&
+                    date.day == now.day);
+          }).toList();
+
+          if (appointments.isEmpty) {
+            return const Text("No appointments for today.");
+          }
 
           return Column(
             children: appointments.map((doc) {
-              final data = doc.data() as Map<String, dynamic>;
+              final data = Map<String, dynamic>.from(doc.data() as Map);
               String dateTimeStr = 'Unknown Time';
-              if (data['date'] is Timestamp) {
+              if (data['isDaily'] == true) {
+                dateTimeStr = "Daily";
+              } else if (data['date'] is Timestamp) {
                 dateTimeStr = DateFormat(
                   'hh:mm a',
                 ).format((data['date'] as Timestamp).toDate());
@@ -206,13 +271,176 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // ---------------- Build HomeScreen ----------------
+  // ---------------- Steps Tracker ----------------
+  Widget _buildStepsCardInner() {
+    double progress = (_todaySteps / _stepGoal).clamp(0.0, 1.0);
+
+    return _buildInnerCard(
+      title: "Steps Tracker",
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Column(
+            children: [
+              Text(
+                _todaySteps.toString(),
+                style: const TextStyle(
+                  fontSize: 30,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 10),
+              LinearProgressIndicator(
+                value: progress,
+                minHeight: 8,
+                backgroundColor: Colors.grey[300],
+                valueColor: const AlwaysStoppedAnimation(Colors.teal),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                "Goal: ${NumberFormat('#,###').format(_stepGoal)} steps",
+                style: const TextStyle(color: Colors.black54),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              IconButton(
+                onPressed: () {
+                  setState(() {
+                    _todaySteps = (_todaySteps - 100).clamp(0, _stepGoal);
+                  });
+                },
+                icon: const Icon(Icons.remove_circle_outline),
+                color: Colors.red,
+              ),
+              IconButton(
+                onPressed: () {
+                  setState(() {
+                    _todaySteps += 100;
+                  });
+                },
+                icon: const Icon(Icons.add_circle_outline),
+                color: Colors.green,
+              ),
+              IconButton(
+                onPressed: () {
+                  setState(() {
+                    _todaySteps = 0;
+                  });
+                },
+                icon: const Icon(Icons.refresh),
+                color: Colors.teal,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ---------------- BP Tracker ----------------
+  Widget _buildBPCardInner() {
+    return _buildInnerCard(
+      title: "BP Tracker",
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Column(
+            children: [
+              TextField(
+                controller: _systolicController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: "Systolic (mmHg)",
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _diastolicController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: "Diastolic (mmHg)",
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 10),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.access_time),
+                    color: Colors.teal,
+                    onPressed: () async {
+                      final date = await showDatePicker(
+                        context: context,
+                        initialDate: DateTime.now(),
+                        firstDate: DateTime(2023),
+                        lastDate: DateTime(2100),
+                      );
+                      if (date == null) return;
+                      final time = await showTimePicker(
+                        context: context,
+                        initialTime: TimeOfDay.now(),
+                      );
+                      if (time == null) return;
+                      setState(() {
+                        _selectedBPDateTime = DateTime(
+                          date.year,
+                          date.month,
+                          date.day,
+                          time.hour,
+                          time.minute,
+                        );
+                      });
+                    },
+                  ),
+                  Text(
+                    _selectedBPDateTime == null
+                        ? "No Time Selected"
+                        : DateFormat(
+                            'dd MMM, hh:mm a',
+                          ).format(_selectedBPDateTime!),
+                    style: const TextStyle(color: Colors.black54),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              ElevatedButton.icon(
+                icon: const Icon(Icons.save),
+                label: const Text("Save"),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.teal),
+                onPressed: _saveBPReading,
+              ),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.dataset, color: Colors.teal),
+                label: const Text("Data", style: TextStyle(color: Colors.teal)),
+                onPressed: _showBPDataDialog,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ---------------- Build UI ----------------
   @override
   Widget build(BuildContext context) {
     final user = _auth.currentUser;
     if (user == null) {
       return const Scaffold(body: Center(child: Text("Please log in first.")));
     }
+
+    final isWideScreen = MediaQuery.of(context).size.width > 600;
 
     return Scaffold(
       backgroundColor: Colors.grey[100],
@@ -228,7 +456,27 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               _buildAppointmentsSection(),
               const SizedBox(height: 20),
-              _buildStepsSection(),
+              _buildSectionContainer(
+                title: "Health Tracker",
+                child: isWideScreen
+                    ? IntrinsicHeight(
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Expanded(child: _buildStepsCardInner()),
+                            const SizedBox(width: 10),
+                            Expanded(child: _buildBPCardInner()),
+                          ],
+                        ),
+                      )
+                    : Column(
+                        children: [
+                          _buildStepsCardInner(),
+                          const SizedBox(height: 10),
+                          _buildBPCardInner(),
+                        ],
+                      ),
+              ),
               const SizedBox(height: 20),
               _buildMedicineSection(),
             ],
@@ -238,7 +486,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // ---------------- Helper: Section Card ----------------
+  // ---------------- Reusable Containers ----------------
   Widget _buildSectionContainer({
     required String title,
     required Widget child,
@@ -246,13 +494,11 @@ class _HomeScreenState extends State<HomeScreen> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final double screenWidth = constraints.maxWidth;
-        final double containerWidth = screenWidth * 0.7;
-
+        final double containerWidth = screenWidth * 0.85;
         return Align(
           alignment: Alignment.center,
           child: Container(
             width: containerWidth,
-            margin: const EdgeInsets.symmetric(vertical: 10),
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               color: Colors.white,
@@ -283,6 +529,34 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         );
       },
+    );
+  }
+
+  Widget _buildInnerCard({required String title, required Widget child}) {
+    return Container(
+      margin: const EdgeInsets.all(5),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.grey[50],
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.teal.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: 18,
+              color: Colors.teal,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 10),
+          child,
+        ],
+      ),
     );
   }
 }

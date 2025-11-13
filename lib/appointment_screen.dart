@@ -15,6 +15,7 @@ class _AppointmentScreenState extends State<AppointmentScreen> {
   final TextEditingController _specialtyController = TextEditingController();
   DateTime? _selectedDate;
   TimeOfDay? _selectedTime;
+  bool _isDaily = false;
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
@@ -27,43 +28,49 @@ class _AppointmentScreenState extends State<AppointmentScreen> {
     final doctor = _doctorController.text.trim();
     final specialty = _specialtyController.text.trim();
 
+    // if not Daily ensure date & time are selected
     if (doctor.isEmpty ||
         specialty.isEmpty ||
-        _selectedDate == null ||
-        _selectedTime == null) {
+        (!_isDaily && (_selectedDate == null || _selectedTime == null))) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text("⚠️ Please fill all fields and select date/time"),
+          content: Text(
+            "⚠️ Please fill all fields and select date/time or choose Daily",
+          ),
         ),
       );
       return;
     }
 
-    final appointmentDateTime = DateTime(
-      _selectedDate!.year,
-      _selectedDate!.month,
-      _selectedDate!.day,
-      _selectedTime!.hour,
-      _selectedTime!.minute,
-    );
+    Map<String, dynamic> payload = {
+      'doctor': doctor,
+      'specialty': specialty,
+      'isDaily': _isDaily,
+      'createdAt': FieldValue.serverTimestamp(),
+    };
+
+    if (!_isDaily) {
+      final appointmentDateTime = DateTime(
+        _selectedDate!.year,
+        _selectedDate!.month,
+        _selectedDate!.day,
+        _selectedTime!.hour,
+        _selectedTime!.minute,
+      );
+      payload['date'] = Timestamp.fromDate(appointmentDateTime);
+    }
 
     await _firestore
         .collection('users')
         .doc(user.uid)
         .collection('appointments')
-        .add({
-          'doctor': doctor,
-          'specialty': specialty,
-          'date': Timestamp.fromDate(
-            appointmentDateTime,
-          ), // ✅ Store as Timestamp
-          'createdAt': FieldValue.serverTimestamp(),
-        });
+        .add(payload);
 
     _doctorController.clear();
     _specialtyController.clear();
     _selectedDate = null;
     _selectedTime = null;
+    _isDaily = false;
 
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text("✅ Appointment added successfully")),
@@ -93,6 +100,7 @@ class _AppointmentScreenState extends State<AppointmentScreen> {
   void editAppointment(String docId, Map<String, dynamic> data) {
     _doctorController.text = data['doctor'] ?? '';
     _specialtyController.text = data['specialty'] ?? '';
+    _isDaily = data['isDaily'] == true;
 
     DateTime? existingDate;
     if (data['date'] is Timestamp) {
@@ -137,17 +145,19 @@ class _AppointmentScreenState extends State<AppointmentScreen> {
                             ? "Select Date"
                             : DateFormat('dd MMM yyyy').format(_selectedDate!),
                       ),
-                      onPressed: () async {
-                        final pickedDate = await showDatePicker(
-                          context: context,
-                          initialDate: _selectedDate ?? DateTime.now(),
-                          firstDate: DateTime(2020),
-                          lastDate: DateTime(2100),
-                        );
-                        if (pickedDate != null) {
-                          setState(() => _selectedDate = pickedDate);
-                        }
-                      },
+                      onPressed: _isDaily
+                          ? null
+                          : () async {
+                              final pickedDate = await showDatePicker(
+                                context: context,
+                                initialDate: _selectedDate ?? DateTime.now(),
+                                firstDate: DateTime(2020),
+                                lastDate: DateTime(2100),
+                              );
+                              if (pickedDate != null) {
+                                setState(() => _selectedDate = pickedDate);
+                              }
+                            },
                     ),
                   ),
                   const SizedBox(width: 10),
@@ -159,18 +169,35 @@ class _AppointmentScreenState extends State<AppointmentScreen> {
                             ? "Select Time"
                             : _selectedTime!.format(context),
                       ),
-                      onPressed: () async {
-                        final pickedTime = await showTimePicker(
-                          context: context,
-                          initialTime: _selectedTime ?? TimeOfDay.now(),
-                        );
-                        if (pickedTime != null) {
-                          setState(() => _selectedTime = pickedTime);
-                        }
-                      },
+                      onPressed: _isDaily
+                          ? null
+                          : () async {
+                              final pickedTime = await showTimePicker(
+                                context: context,
+                                initialTime: _selectedTime ?? TimeOfDay.now(),
+                              );
+                              if (pickedTime != null) {
+                                setState(() => _selectedTime = pickedTime);
+                              }
+                            },
                     ),
                   ),
                 ],
+              ),
+              const SizedBox(height: 10),
+              CheckboxListTile(
+                title: const Text("Repeat Daily"),
+                value: _isDaily,
+                onChanged: (val) {
+                  setState(() {
+                    _isDaily = val ?? false;
+                    if (_isDaily) {
+                      _selectedDate = null;
+                      _selectedTime = null;
+                    }
+                  });
+                },
+                activeColor: Colors.teal,
               ),
             ],
           ),
@@ -185,34 +212,44 @@ class _AppointmentScreenState extends State<AppointmentScreen> {
                 final user = _auth.currentUser;
                 if (user == null) return;
 
-                if (_selectedDate == null || _selectedTime == null) {
+                if (!_isDaily &&
+                    (_selectedDate == null || _selectedTime == null)) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
-                      content: Text("⚠️ Please select date & time"),
+                      content: Text(
+                        "⚠️ Please select date & time or choose Daily",
+                      ),
                     ),
                   );
                   return;
                 }
 
-                final appointmentDateTime = DateTime(
-                  _selectedDate!.year,
-                  _selectedDate!.month,
-                  _selectedDate!.day,
-                  _selectedTime!.hour,
-                  _selectedTime!.minute,
-                );
+                Map<String, dynamic> updated = {
+                  'doctor': _doctorController.text.trim(),
+                  'specialty': _specialtyController.text.trim(),
+                  'isDaily': _isDaily,
+                };
 
-                await _firestore
+                if (_isDaily) {
+                  updated['date'] = null;
+                } else {
+                  final appointmentDateTime = DateTime(
+                    _selectedDate!.year,
+                    _selectedDate!.month,
+                    _selectedDate!.day,
+                    _selectedTime!.hour,
+                    _selectedTime!.minute,
+                  );
+                  updated['date'] = Timestamp.fromDate(appointmentDateTime);
+                }
+
+                final docRef = _firestore
                     .collection('users')
                     .doc(user.uid)
                     .collection('appointments')
-                    .doc(docId)
-                    .update({
-                      'doctor': _doctorController.text.trim(),
-                      'specialty': _specialtyController.text.trim(),
-                      'date': Timestamp.fromDate(appointmentDateTime),
-                    });
+                    .doc(docId);
 
+                await docRef.update(updated);
                 Navigator.pop(context);
 
                 ScaffoldMessenger.of(context).showSnackBar(
@@ -225,6 +262,7 @@ class _AppointmentScreenState extends State<AppointmentScreen> {
                 _specialtyController.clear();
                 _selectedDate = null;
                 _selectedTime = null;
+                _isDaily = false;
 
                 setState(() {});
               },
@@ -236,13 +274,14 @@ class _AppointmentScreenState extends State<AppointmentScreen> {
     );
   }
 
+  // Use full appointments stream
   Stream<QuerySnapshot> getAppointments() {
     final user = _auth.currentUser;
     return _firestore
         .collection('users')
         .doc(user!.uid)
         .collection('appointments')
-        .orderBy('date', descending: false)
+        .orderBy('createdAt', descending: false)
         .snapshots();
   }
 
@@ -312,18 +351,22 @@ class _AppointmentScreenState extends State<AppointmentScreen> {
                                           'dd MMM yyyy',
                                         ).format(_selectedDate!),
                                 ),
-                                onPressed: () async {
-                                  final pickedDate = await showDatePicker(
-                                    context: context,
-                                    initialDate:
-                                        _selectedDate ?? DateTime.now(),
-                                    firstDate: DateTime(2020),
-                                    lastDate: DateTime(2100),
-                                  );
-                                  if (pickedDate != null) {
-                                    setState(() => _selectedDate = pickedDate);
-                                  }
-                                },
+                                onPressed: _isDaily
+                                    ? null
+                                    : () async {
+                                        final pickedDate = await showDatePicker(
+                                          context: context,
+                                          initialDate:
+                                              _selectedDate ?? DateTime.now(),
+                                          firstDate: DateTime(2020),
+                                          lastDate: DateTime(2100),
+                                        );
+                                        if (pickedDate != null) {
+                                          setState(
+                                            () => _selectedDate = pickedDate,
+                                          );
+                                        }
+                                      },
                               ),
                             ),
                             const SizedBox(width: 10),
@@ -338,25 +381,43 @@ class _AppointmentScreenState extends State<AppointmentScreen> {
                                       ? "Select Time"
                                       : _selectedTime!.format(context),
                                 ),
-                                onPressed: () async {
-                                  final pickedTime = await showTimePicker(
-                                    context: context,
-                                    initialTime:
-                                        _selectedTime ?? TimeOfDay.now(),
-                                  );
-                                  if (pickedTime != null) {
-                                    setState(() => _selectedTime = pickedTime);
-                                  }
-                                },
+                                onPressed: _isDaily
+                                    ? null
+                                    : () async {
+                                        final pickedTime = await showTimePicker(
+                                          context: context,
+                                          initialTime:
+                                              _selectedTime ?? TimeOfDay.now(),
+                                        );
+                                        if (pickedTime != null) {
+                                          setState(
+                                            () => _selectedTime = pickedTime,
+                                          );
+                                        }
+                                      },
                               ),
                             ),
                           ],
                         ),
-                        const SizedBox(height: 20),
+                        const SizedBox(height: 10),
+                        CheckboxListTile(
+                          title: const Text("Repeat Daily"),
+                          value: _isDaily,
+                          onChanged: (val) {
+                            setState(() {
+                              _isDaily = val ?? false;
+                              if (_isDaily) {
+                                _selectedDate = null;
+                                _selectedTime = null;
+                              }
+                            });
+                          },
+                          activeColor: Colors.teal,
+                        ),
+                        const SizedBox(height: 10),
                         ElevatedButton(
                           style: ElevatedButton.styleFrom(
                             backgroundColor: Colors.teal,
-                            foregroundColor: Colors.white,
                             minimumSize: const Size(double.infinity, 45),
                           ),
                           onPressed: addAppointment,
@@ -369,15 +430,15 @@ class _AppointmentScreenState extends State<AppointmentScreen> {
               ),
             ),
             const SizedBox(height: 20),
-            // List of Appointments
             StreamBuilder<QuerySnapshot>(
               stream: getAppointments(),
               builder: (context, snapshot) {
                 if (!snapshot.hasData) return const CircularProgressIndicator();
 
                 final appointments = snapshot.data!.docs;
-                if (appointments.isEmpty)
+                if (appointments.isEmpty) {
                   return const Text("No appointments added.");
+                }
 
                 return Column(
                   children: appointments.map((doc) {
@@ -386,6 +447,7 @@ class _AppointmentScreenState extends State<AppointmentScreen> {
                     if (data['date'] is Timestamp) {
                       dateTime = (data['date'] as Timestamp).toDate();
                     }
+                    final isDaily = data['isDaily'] == true;
 
                     return Center(
                       child: SizedBox(
@@ -404,7 +466,9 @@ class _AppointmentScreenState extends State<AppointmentScreen> {
                             ),
                             title: Text(data['doctor'] ?? 'Unknown Doctor'),
                             subtitle: Text(
-                              "Specialty: ${data['specialty'] ?? ''}\nDate: ${dateTime != null ? DateFormat('dd MMM yyyy - hh:mm a').format(dateTime) : 'N/A'}",
+                              isDaily
+                                  ? "Specialty: ${data['specialty'] ?? ''}\nRepeats: Daily"
+                                  : "Specialty: ${data['specialty'] ?? ''}\nDate: ${dateTime != null ? DateFormat('dd MMM yyyy - hh:mm a').format(dateTime) : 'N/A'}",
                             ),
                             trailing: Row(
                               mainAxisSize: MainAxisSize.min,
